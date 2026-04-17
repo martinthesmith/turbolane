@@ -135,7 +135,7 @@
   const keys = Object.create(null);
   const blockDefault = new Set([
     'ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
-    'Space','ShiftLeft','ShiftRight','ControlLeft','Enter'
+    'Space','ShiftLeft','ShiftRight','Enter'
   ]);
   window.addEventListener('keydown', e => {
     keys[e.code] = true;
@@ -236,7 +236,6 @@
 
       // Friction: normal = high lateral (grip), drift = low lateral (slide)
       const lateralFriction = drift ? 1.4 : 6.5;
-      const rollingFriction = 0.6;
 
       this.vx -= lateralX * lateralFriction * dt;
       this.vy -= lateralY * lateralFriction * dt;
@@ -248,14 +247,8 @@
         this.vy *= drag;
       }
 
-      // Clamp max speed
-      const curSpeed = Math.hypot(this.vx, this.vy);
-      if (curSpeed > MAX_SPEED) {
-        this.vx = this.vx / curSpeed * MAX_SPEED;
-        this.vy = this.vy / curSpeed * MAX_SPEED;
-      }
-
       // Boost meter fills while drifting at speed
+      const curSpeed = Math.hypot(this.vx, this.vy);
       const lateralSpeed = Math.hypot(lateralX, lateralY);
       if (drift && curSpeed > 60) {
         this.boost = Math.min(100, this.boost + lateralSpeed * 0.08 * dt);
@@ -270,6 +263,13 @@
         this.boost = Math.max(0, this.boost - 35 * dt);
         this.vx += fwdX * 260 * dt;
         this.vy += fwdY * 260 * dt;
+      }
+
+      // Clamp max speed — after nitro so it acts as the true ceiling
+      const finalSpeed = Math.hypot(this.vx, this.vy);
+      if (finalSpeed > MAX_SPEED) {
+        this.vx = this.vx / finalSpeed * MAX_SPEED;
+        this.vy = this.vy / finalSpeed * MAX_SPEED;
       }
 
       // Move
@@ -324,10 +324,10 @@
       }
     }
 
-    draw(ctx) {
+    draw(ctx, now) {
       // Smoke trail
       for (const s of this.smokeTrail) {
-        const age = (performance.now() - s.t) / 700;
+        const age = (now - s.t) / 700;
         ctx.globalAlpha = (1 - age) * 0.4;
         ctx.fillStyle = '#cccccc';
         ctx.beginPath();
@@ -507,6 +507,32 @@
     }
   }
 
+  function collideCarVsCar(a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy);
+    const minDist = a.radius + b.radius;
+    if (dist >= minDist || dist === 0) return;
+
+    // Push apart equally
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const overlap = (minDist - dist) / 2;
+    a.x -= nx * overlap;
+    a.y -= ny * overlap;
+    b.x += nx * overlap;
+    b.y += ny * overlap;
+
+    // Elastic velocity exchange along collision normal
+    const relV = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+    if (relV > 0) { // only resolve if approaching
+      a.vx -= relV * nx;
+      a.vy -= relV * ny;
+      b.vx += relV * nx;
+      b.vy += relV * ny;
+    }
+  }
+
   const state = {
     winner: null,
     running: false,
@@ -534,6 +560,7 @@
       P2.update(dt, now);
       P1.collideTrack();
       P2.collideTrack();
+      collideCarVsCar(P1, P2);
 
       if (P1.lap >= 3) state.winner = 'P1';
       else if (P2.lap >= 3) state.winner = 'P2';
@@ -551,8 +578,8 @@
     ctx.translate(-cam.x, -cam.y);
 
     drawTrack();
-    P1.draw(ctx);
-    P2.draw(ctx);
+    P1.draw(ctx, now);
+    P2.draw(ctx, now);
 
     ctx.restore();
 
